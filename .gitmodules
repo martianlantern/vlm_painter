@@ -1,0 +1,3 @@
+[submodule "PaintTransformer"]
+	path = PaintTransformer
+	url = https://github.com/Huage001/PaintTransformer.git
