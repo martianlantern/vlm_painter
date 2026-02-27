@@ -3,4 +3,5 @@
 LOGFILE="agent_logs/agent_${COMMIT}.log"
 claude --dangerously-skip-permissions \
        -p "$(cat PROMPT.md)" \
-       --model claude-opus-X-Y &> "$LOGFILE"
+       --output-format text \
+       --model claude-opus-4-6-thinking &> "$LOGFILE"
