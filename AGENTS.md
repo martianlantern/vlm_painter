@@ -16,7 +16,7 @@ if __name__ == "__main__":
     fire.Fire(main)
 ```
 always use the fire library for creating and passing args in the script when ever needed
-If the task does not allow create the python executable and inline dependencies it's completely fine to prefer an alternative instead
+If the task does not allow to create the python executable and inline dependencies it's completely fine to prefer an alternative instead
 
 After every experiment/implementation or sprint maintain a note of what you did under `notes` dir. The note can include things like what was the goal, what was the outcome, how you did it, etc, Also feel free to log any results or numbers or even images (via ![]() in md) or media assets in the notes if they are important or seems like it needs to be showed to understand the context of the note and the project
 
@@ -26,11 +26,6 @@ The notes are for yourself and not for anyone else, think of them like your roug
 ---
 title: short_title_for_the_note
 description: summary_of_the_entire_note
-created_at: 3:40PM, 27th Feb, 2026
-finished_at: 11:40PM, 28th Feb, 2026 (or None)
-pending: True/False
-ongoing: True/False
-finished: True/False
 related notes: [[note_1.md]], [[note_2.md]], [[note_3.md]]
 ---
 
