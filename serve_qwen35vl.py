@@ -1,9 +1,8 @@
-#!/usr/bin/env -S PYTHONUNBUFFERED=1 uv run --prerelease=allow --script
+#!/usr/bin/env -S PYTHONUNBUFFERED=1 VLLM_USE_PRECOMPILED=1 uv run --script
 # /// script
 # requires-python = ">=3.12"
 # dependencies = [
 #   "vllm @ git+https://github.com/vllm-project/vllm.git",
-#   "transformers @ git+https://github.com/huggingface/transformers.git",
 #   "fire>=0.7.1",
 #   "qwen-vl-utils>=0.0.14",
 # ]
