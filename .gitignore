@@ -205,3 +205,26 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Training artifacts
+checkpoints/
+outputs/
+results/
+runs/
+wandb/
+*.pt
+*.pth
+*.bin
+*.safetensors
+!PaintTransformer/**
+
+# Datasets
+data/
+celeba/
+
+# Brush assets (binary)
+brush/
+
+# Rendered outputs
+rendered/
+samples/
