@@ -13,7 +13,7 @@ def serve(
     model: str = "Qwen/Qwen3.5-0.8B",
     host: str = "0.0.0.0",
     port: int = 8000,
-    max_model_len: int = 4096,
+    max_model_len: int = 8000,
     gpu_memory_utilization: float = 0.9,
     dtype: str = "bfloat16",
     enable_prefix_caching: bool = True,

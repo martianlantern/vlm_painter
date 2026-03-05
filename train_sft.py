@@ -12,23 +12,28 @@
 #   "wandb",
 #   "Pillow>=10.0.0",
 #   "qwen-vl-utils>=0.0.14",
-#   "bitsandbytes>=0.45.0",
-#   "python-dotenv",
+#   "causal-conv1d>=1.6.0",
 # ]
 # ///
-import json
 import os
 import fire
 import torch
 import wandb
-from pathlib import Path
-from dotenv import load_dotenv
-load_dotenv()
+from PIL import Image
+
+SYSTEM_PROMPT = """You are an image painter. Given an image your task is to generate brush strokes to paint an image similar to it.
+Each stroke has 8 parameters: x, y, width, height, rotation, R, G, B
+- x, y: center position (0.0 to 1.0)
+- width, height: stroke size (0.1 to 0.5)
+- rotation: angle (0.0 to 1.0, where 1.0 = 180 degrees)
+- R, G, B: color (0.0 to 1.0)
+
+Output strokes one per line, as comma-separated values."""
 
 
 def main(
     model_name: str = "Qwen/Qwen3.5-0.8B",
-    data_dir: str = "data/sft",
+    dataset_id: str = "darshanmakwana/vlm_painter_sft",
     output_dir: str = "checkpoints/sft",
     epochs: int = 3,
     batch_size: int = 2,
@@ -36,16 +41,17 @@ def main(
     lr: float = 1e-4,
     lora_r: int = 64,
     lora_alpha: int = 128,
-    max_seq_len: int = 512,
+    max_seq_len: int = 5000,
     device: str = "0",
     wandb_project: str = "vlm-painter",
     run_name: str = "sft-v1",
 ):
     os.environ["CUDA_VISIBLE_DEVICES"] = device
 
-    from transformers import AutoProcessor, AutoModelForImageTextToText, BitsAndBytesConfig, TrainingArguments, Trainer
+    from transformers import AutoProcessor, AutoModelForImageTextToText, TrainingArguments, Trainer
     from peft import LoraConfig, get_peft_model
     from qwen_vl_utils import process_vision_info
+    from datasets import load_dataset
 
     wandb.init(project=wandb_project, name=run_name, config={
         "model": model_name, "epochs": epochs, "lr": lr,
@@ -55,18 +61,11 @@ def main(
     processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
     processor.tokenizer.padding_side = "right"
 
-    quant_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.bfloat16,
-        bnb_4bit_use_double_quant=True,
-    )
     model = AutoModelForImageTextToText.from_pretrained(
         model_name,
         dtype=torch.bfloat16,
-        quantization_config=quant_config,
         trust_remote_code=True,
-    )
+    ).to("cuda")
 
     lora_config = LoraConfig(
         r=lora_r,
@@ -79,15 +78,25 @@ def main(
     model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
 
-    with open(f"{data_dir}/train.json") as f:
-        train_raw = json.load(f)
-    with open(f"{data_dir}/val.json") as f:
-        val_raw = json.load(f)
+    ds = load_dataset(dataset_id)
+    train_split = ds["train"]
+    test_split = ds["test"]
 
-    def preprocess(raw_data):
+    def build_messages(example):
+        user_prompt = f"Generate {example['num_strokes']} strokes to paint this image:"
+        return [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": [
+                {"type": "text", "text": user_prompt},
+                {"type": "image", "image": example["image"]},
+            ]},
+            {"role": "assistant", "content": example["strokes"]},
+        ]
+
+    def preprocess(split):
         samples = []
-        for item in raw_data:
-            msgs = item["messages"]
+        for example in split:
+            msgs = build_messages(example)
             text = processor.apply_chat_template(msgs, tokenize=False, add_generation_prompt=False)
             img_inputs, _ = process_vision_info(msgs)
 
@@ -122,18 +131,12 @@ def main(
         return samples
 
     print("Preprocessing train data...")
-    train_data = preprocess(train_raw)
-    print("Preprocessing val data...")
-    val_data = preprocess(val_raw)
+    train_data = preprocess(train_split)
+    print(max([sample["input_ids"].shape[-1] for sample in train_data]))
+    print("Preprocessing test data...")
+    val_data = preprocess(test_split)
+    print(max([sample["input_ids"].shape[-1] for sample in val_data]))
     print(f"Train: {len(train_data)} | Val: {len(val_data)}")
-
-    class VLMDataset(torch.utils.data.Dataset):
-        def __init__(self, data):
-            self.data = data
-        def __len__(self):
-            return len(self.data)
-        def __getitem__(self, idx):
-            return self.data[idx]
 
     def collate_fn(batch):
         max_len = max(b["input_ids"].shape[0] for b in batch)
@@ -168,7 +171,7 @@ def main(
         lr_scheduler_type="cosine",
         warmup_steps=20,
         bf16=True,
-        logging_steps=5,
+        logging_steps=1,
         eval_strategy="steps",
         eval_steps=50,
         save_strategy="steps",
@@ -176,15 +179,15 @@ def main(
         save_total_limit=3,
         report_to="wandb",
         remove_unused_columns=False,
-        dataloader_num_workers=0,
-        gradient_checkpointing=True,
+        dataloader_num_workers=8,
+        gradient_checkpointing=False,
     )
 
     trainer = Trainer(
         model=model,
         args=training_args,
-        train_dataset=VLMDataset(train_data),
-        eval_dataset=VLMDataset(val_data),
+        train_dataset=train_data,
+        eval_dataset=val_data,
         data_collator=collate_fn,
     )
 
@@ -193,7 +196,6 @@ def main(
     processor.save_pretrained(f"{output_dir}/final")
     wandb.finish()
     print(f"\nSFT training complete! Model saved to {output_dir}/final")
-
 
 if __name__ == "__main__":
     fire.Fire(main)
