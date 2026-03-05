@@ -17,6 +17,8 @@ def serve(
     gpu_memory_utilization: float = 0.9,
     dtype: str = "bfloat16",
     enable_prefix_caching: bool = True,
+    lora_modules: str | None = None,
+    max_lora_rank: int = 64,
     extra: list[str] | None = None,
     device: str = "0",
 ):
@@ -30,9 +32,13 @@ def serve(
         "--gpu-memory-utilization", str(gpu_memory_utilization),
         "--dtype", dtype,
         "--limit-mm-per-prompt", '{"image": 1, "video": 0}',
+        "--trust-remote-code",
     ]
     if enable_prefix_caching:
         argv.append("--enable-prefix-caching")
+    if lora_modules:
+        argv.extend(["--enable-lora", "--max-lora-rank", str(max_lora_rank)])
+        argv.extend(["--lora-modules", lora_modules])
     if extra:
         argv.extend(extra)
 

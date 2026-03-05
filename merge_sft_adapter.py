@@ -7,15 +7,13 @@
 #   "transformers @ git+https://github.com/huggingface/transformers.git",
 #   "peft>=0.18.0",
 #   "accelerate>=1.0.0",
-#   "python-dotenv",
+#   "pillow>=12.1.1",
+#   "torchvision>=0.25.0",
 # ]
 # ///
 import os
 import fire
 import torch
-from dotenv import load_dotenv
-load_dotenv()
-
 
 def main(
     base_model: str = "Qwen/Qwen3.5-0.8B",
@@ -44,6 +42,15 @@ def main(
 
     processor = AutoProcessor.from_pretrained(base_model, trust_remote_code=True)
     processor.save_pretrained(output_path)
+
+    import json
+    tc_path = os.path.join(output_path, "tokenizer_config.json")
+    with open(tc_path) as f:
+        tc = json.load(f)
+    if tc.get("tokenizer_class") == "TokenizersBackend":
+        tc["tokenizer_class"] = "Qwen2Tokenizer"
+        with open(tc_path, "w") as f:
+            json.dump(tc, f, indent=2)
 
     print("Done!")
 
