@@ -2,7 +2,7 @@
 # /// script
 # requires-python = ">=3.12"
 # dependencies = [
-#   "vllm @ git+https://github.com/vllm-project/vllm.git",
+#   "vllm==0.17.0",
 #   "fire>=0.7.1",
 #   "qwen-vl-utils>=0.0.14",
 # ]
