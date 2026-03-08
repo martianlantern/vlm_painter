@@ -12,6 +12,7 @@
 #     "unsloth-zoo>=2026.3.1",
 #     "wandb>=0.25.0",
 #     "xformers==0.0.32.post2",
+#     "httpx>=0.27.0",
 # ]
 # ///
 from unsloth import FastVisionModel
@@ -21,7 +22,9 @@ import tempfile
 import torch
 import time
 import copy
+import json
 import os
+import shutil
 
 model, tokenizer = FastVisionModel.from_pretrained(
     "unsloth/Qwen3.5-0.8B",
@@ -72,6 +75,68 @@ from transformers import TrainerCallback
 
 FastVisionModel.for_training(model) # Enable for training!
 
+import asyncio
+import base64
+import httpx
+
+def pil_to_base64(img):
+    import io
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode()
+
+async def vllm_request(client, msg):
+    image = None
+    text = None
+    for item in msg["content"]:
+        if item["type"] == "text":
+            text = item["text"]
+        elif item["type"] == "image":
+            image = pil_to_base64(item["image"])
+
+    payload = {
+        "model": "dummy",
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": text},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{image}"}
+                },
+            ],
+        }],
+        "max_tokens": 256,
+    }
+
+    r = await client.post("/v1/chat/completions", json=payload)
+    r.raise_for_status()
+    return r.json()["choices"][0]["message"]["content"]
+
+async def run_parallel_inference(messages, concurrency=32):
+
+    async with httpx.AsyncClient(
+        base_url="http://localhost:8000",
+        timeout=None,
+    ) as client:
+
+        sem = asyncio.Semaphore(concurrency)
+
+        async def limited(msg):
+            async with sem:
+                return await vllm_request(client, msg)
+
+        tasks = [asyncio.create_task(limited(m["messages"][0])) for m in messages]
+
+        results = []
+        with tqdm(total=len(tasks), desc="vLLM inference") as pbar:
+            for fut in asyncio.as_completed(tasks):
+                res = await fut
+                results.append(res)
+                pbar.update(1)
+
+        return results
+
 class PredictionCallback(TrainerCallback):
     def __init__(self):
         pass
@@ -91,22 +156,33 @@ class PredictionCallback(TrainerCallback):
                 max_shard_size="10GB",
             )
             tokenizer.save_pretrained(tmpdir)
+            tc_path = os.path.join(tmpdir, "tokenizer_config.json")
+            with open(tc_path) as f:
+                tc = json.load(f)
+            if tc.get("tokenizer_class") == "TokenizersBackend":
+                tc["tokenizer_class"] = "Qwen2Tokenizer"
+                with open(tc_path, "w") as f:
+                    json.dump(tc, f, indent=2)
             print("Time taken to save model shards: ", time.time() - start_time, "s")
 
+            start_time = time.time()
             proc = subprocess.Popen([
                 "./serve_qwen35vl.py",
                 "--model", tmpdir,
                 "--port", "8000",
                 "--gpu_memory_utilization", "0.3",
-            ], preexec_fn=os.setsid)
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            preexec_fn=os.setsid)
 
-            for _ in range(60):
-                print("Wait!!!")
+            while True:
                 try:
                     requests.get("http://localhost:8000/health")
                     break
                 except:
                     time.sleep(1)
+            print("Time taken for vLLM server to start: ", time.time() - start_time, "s")
 
             os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
     
