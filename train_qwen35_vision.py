@@ -25,6 +25,7 @@ import copy
 import json
 import os
 import shutil
+import requests
 
 model, tokenizer = FastVisionModel.from_pretrained(
     "unsloth/Qwen3.5-0.8B",
@@ -75,68 +76,6 @@ from transformers import TrainerCallback
 
 FastVisionModel.for_training(model) # Enable for training!
 
-import asyncio
-import base64
-import httpx
-
-def pil_to_base64(img):
-    import io
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return base64.b64encode(buf.getvalue()).decode()
-
-async def vllm_request(client, msg):
-    image = None
-    text = None
-    for item in msg["content"]:
-        if item["type"] == "text":
-            text = item["text"]
-        elif item["type"] == "image":
-            image = pil_to_base64(item["image"])
-
-    payload = {
-        "model": "dummy",
-        "messages": [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": text},
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{image}"}
-                },
-            ],
-        }],
-        "max_tokens": 256,
-    }
-
-    r = await client.post("/v1/chat/completions", json=payload)
-    r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"]
-
-async def run_parallel_inference(messages, concurrency=32):
-
-    async with httpx.AsyncClient(
-        base_url="http://localhost:8000",
-        timeout=None,
-    ) as client:
-
-        sem = asyncio.Semaphore(concurrency)
-
-        async def limited(msg):
-            async with sem:
-                return await vllm_request(client, msg)
-
-        tasks = [asyncio.create_task(limited(m["messages"][0])) for m in messages]
-
-        results = []
-        with tqdm(total=len(tasks), desc="vLLM inference") as pbar:
-            for fut in asyncio.as_completed(tasks):
-                res = await fut
-                results.append(res)
-                pbar.update(1)
-
-        return results
-
 class PredictionCallback(TrainerCallback):
     def __init__(self):
         pass
@@ -146,6 +85,7 @@ class PredictionCallback(TrainerCallback):
 
             model = kwargs["model"]
             tmpdir = tempfile.mkdtemp(prefix="tmp_model_ckpt")
+            tmpdir = "/jupyter_workspace"
             
             start_time = time.time()
             merged_model = copy.deepcopy(model)
@@ -178,10 +118,12 @@ class PredictionCallback(TrainerCallback):
 
             while True:
                 try:
-                    requests.get("http://localhost:8000/health")
-                    break
-                except:
-                    time.sleep(1)
+                    r = requests.get("http://localhost:8000/health", timeout=1)
+                    if r.status_code == 200:
+                        break
+                except requests.RequestException:
+                    pass
+                time.sleep(1)
             print("Time taken for vLLM server to start: ", time.time() - start_time, "s")
 
             os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
